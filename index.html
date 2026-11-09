@@ -46,7 +46,7 @@ input{font:inherit;font-size:18px;width:100%;margin-top:12px;padding:10px;border
 <script>
 // ===== 可調整參數(測試時改這裡) =====
 const CFG={
-  dur:15, cap:100,            // 限時秒數、單關最高分
+  dur:45, cap:100,            // 限時秒數、單關最高分
   p2:.05, p10:.01,            // 2倍、10倍出現機率
   numBest:6, numStep:1, numLoss:5,   // 第3關:6秒內滿分,每多1秒扣5分
   memBest:20, memStep:2, memLoss:5   // 第5關:20秒內滿分,每多2秒扣5分
@@ -97,7 +97,7 @@ function L1(done){OPT={};arena(G=>{
   }},done)}
 
 // ===== 第2關:平台跳躍 =====
-function L2(done){OPT={dur:60,keys:1};arena(G=>{
+function L2(done){OPT={dur:45,keys:1};arena(G=>{
   const ic={1:'⭐',2:'💰',10:'💎'},p={x:180,y:430,vy:0},pl=[{x:0,y:460,w:360}],it=[];
   let cam=0,top=460,px=145;
   const gen=()=>{while(top>cam-80){
