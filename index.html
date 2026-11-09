@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>37角落小遊戲</title>
+<style>
+:root{--bg:#eaf2f6;--ink:#14303d;--card:#fff;--line:#14303d;--acc:#f2a900;--acc2:#3d8fb0;--ok:#2f9e63;--bad:#d9534f;--sub:#4d6b79}
+@media(prefers-color-scheme:dark){:root{--bg:#10222b;--ink:#e6f0f4;--card:#193541;--line:#e6f0f4;--sub:#9db8c4}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif}
+#app{max-width:420px;margin:0 auto;padding:16px}
+h1{font-size:30px;margin:8px 0}h2{font-size:22px;margin:4px 0 8px}
+p{line-height:1.7;color:var(--sub);margin:6px 0}
+.panel{background:var(--card);border:3px solid var(--line);border-radius:18px;padding:18px;box-shadow:5px 5px 0 var(--line)}
+.btn{font:inherit;font-weight:700;font-size:18px;color:#14303d;background:var(--acc);border:3px solid var(--line);border-radius:14px;padding:10px 22px;box-shadow:4px 4px 0 var(--line);cursor:pointer;margin-top:14px}
+.btn:active{transform:translate(3px,3px);box-shadow:1px 1px 0 var(--line)}
+#hud{font-weight:700;font-size:18px;display:flex;justify-content:space-between;padding:4px 4px 10px}
+canvas{width:100%;display:block;background:var(--card);border:3px solid var(--line);border-radius:18px;touch-action:none}
+.grid{display:grid;gap:8px}
+.g4{grid-template-columns:repeat(4,1fr)}.g3{grid-template-columns:repeat(3,1fr)}
+.cell{aspect-ratio:1;font:inherit;font-size:30px;font-weight:700;color:var(--ink);background:var(--card);border:3px solid var(--line);border-radius:14px;cursor:pointer;padding:0}
+.ghost{border-color:transparent;background:transparent;cursor:default}
+.ok{background:var(--ok);color:#fff;border-color:var(--ok)}
+.bad{background:var(--bad);color:#fff}
+.hole{background:var(--acc2);border-radius:50%;font-size:44px}
+.back{background:var(--acc2)}
+.row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:2px dashed var(--sub)}
+.big{font-size:44px;font-weight:800;margin:6px 0}
+.bar{display:flex;gap:6px;margin-bottom:10px}
+.bar i{flex:1;height:8px;border-radius:4px;background:var(--sub);opacity:.35}
+.bar i.on{background:var(--acc);opacity:1}
+.ctl{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:10px;margin-top:12px}
+.ctl button{font:inherit;font-size:24px;font-weight:700;padding:16px 0;color:#14303d;background:var(--acc);border:3px solid var(--line);border-radius:14px;box-shadow:3px 3px 0 var(--line);touch-action:none;user-select:none;-webkit-user-select:none}
+.g5{grid-template-columns:repeat(5,1fr)}
+.key{font:inherit;font-size:22px;font-weight:700;padding:10px 0;color:var(--ink);background:var(--card);border:3px solid var(--line);border-radius:12px;cursor:pointer}
+.key:disabled{opacity:.3}
+.slots{display:flex;gap:8px;justify-content:center;margin-bottom:8px}
+.slots span{width:56px;height:64px;display:flex;align-items:center;justify-content:center;font-size:34px;font-weight:800;border:3px solid var(--line);border-radius:12px}
+input{font:inherit;font-size:18px;width:100%;margin-top:12px;padding:10px;border:3px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink)}
+.btn.sec{background:var(--card);color:var(--ink);margin-left:8px}
+</style>
+</head>
+<body>
+<div id="app"><div class="bar" id="bar"></div><main id="stage"></main></div>
+<script>
+// ===== 可調整參數(測試時改這裡) =====
+const CFG={
+  dur:15, cap:100,            // 限時秒數、單關最高分
+  p2:.05, p10:.01,            // 2倍、10倍出現機率
+  numBest:6, numStep:1, numLoss:5,   // 第3關:6秒內滿分,每多1秒扣5分
+  memBest:20, memStep:2, memLoss:5   // 第5關:20秒內滿分,每多2秒扣5分
+};
+const $=s=>document.querySelector(s);
+const roll=()=>{const r=Math.random();return r<CFG.p10?10:r<CFG.p10+CFG.p2?2:1};
+const byTime=(t,b,s,l)=>Math.max(0,100-l*Math.ceil(Math.max(0,t-b)/s));
+const shuffle=a=>a.sort(()=>Math.random()-.5);
+let timers=[],scores=[],lv=0;
+const K={},KM={ArrowLeft:'l',a:'l',ArrowRight:'r',d:'r',ArrowUp:'j',w:'j',' ':'j'};
+['keydown','keyup'].forEach(t=>addEventListener(t,e=>{const k=KM[e.key];if(k&&K.on){K[k]=t==='keydown';e.preventDefault()}}));
+let OPT={};
+const clr=()=>{timers.forEach(clearInterval);timers=[];K.on=false};
+const every=(f,ms)=>timers.push(setInterval(f,ms));
+
+// ===== 共用:畫布遊戲(第1、2關) =====
+function arena(init,done){const o=OPT;
+  $('#stage').innerHTML='<div id="hud"></div><canvas id="cv" width="360" height="480"></canvas>'+(o.keys?'<div class="ctl"><button data-k="l">◀</button><button data-k="j">跳</button><button data-k="r">▶</button></div>':'');
+  K.l=K.r=K.j=false;K.on=!!o.keys;
+  if(o.keys)document.querySelectorAll('.ctl button').forEach(b=>{const k=b.dataset.k,f=v=>e=>{K[k]=v;e.preventDefault()};b.onpointerdown=f(true);b.onpointerup=b.onpointerleave=b.onpointercancel=f(false);b.oncontextmenu=e=>e.preventDefault()});
+  const c=$('#cv'),g=c.getContext('2d'),W=360,H=480;
+  let mx=W/2,score=0,left=o.dur||CFG.dur,last=performance.now(),run=true;
+  const mv=e=>{const r=c.getBoundingClientRect();mx=(e.clientX-r.left)/r.width*W};
+  if(!o.keys){c.addEventListener('pointermove',mv);c.addEventListener('pointerdown',mv)}
+  const G={W,H,g,get mx(){return mx},add:n=>{score+=n}};
+  const step=init(G);
+  (function f(now){
+    if(!run)return;
+    const dt=Math.min(.05,(now-last)/1000);last=now;left-=dt;
+    g.clearRect(0,0,W,H);g.textAlign='center';g.font='34px serif';
+    step(dt);
+    $('#hud').innerHTML=`<span>⏱ ${Math.max(0,left).toFixed(1)}s</span><span>⭐ ${Math.min(score,CFG.cap)}</span>`;
+    if(left<=0){run=false;done(score);return}
+    requestAnimationFrame(f);
+  })(last);
+}
+
+// ===== 第1關:接硬幣 =====
+function L1(done){OPT={};arena(G=>{
+  const ic={1:'🪙',2:'💰',10:'💎'};let it=[],t=0;
+  return dt=>{
+    t-=dt;if(t<=0){t=.28;it.push({x:20+Math.random()*(G.W-40),y:-20,m:roll(),v:150+Math.random()*100})}
+    const bx=G.mx,by=G.H-40;
+    it=it.filter(o=>{o.y+=o.v*dt;
+      if(Math.abs(o.x-bx)<38&&Math.abs(o.y-by)<28){G.add(o.m);return false}
+      G.g.fillText(ic[o.m],o.x,o.y);return o.y<G.H+30});
+    G.g.fillText('🧺',bx,by+12);
+  }},done)}
+
+// ===== 第2關:平台跳躍 =====
+function L2(done){OPT={dur:60,keys:1};arena(G=>{
+  const ic={1:'⭐',2:'💰',10:'💎'},p={x:180,y:430,vy:0},pl=[{x:0,y:460,w:360}],it=[];
+  let cam=0,top=460,px=145;
+  const gen=()=>{while(top>cam-80){
+    top-=55+Math.random()*25;const x=Math.max(0,Math.min(290,px+(Math.random()*2-1)*110));px=x;pl.push({x,y:top,w:70});
+    if(Math.random()<.85)it.push({x:x+35,y:top-26,m:roll()});
+  }};
+  return dt=>{
+    const py=p.y;p.vy+=2200*dt;p.y+=p.vy*dt;p.x=Math.max(0,Math.min(G.W,p.x+((K.r?1:0)-(K.l?1:0))*260*dt));let on=false;
+    if(p.vy>=0)for(const q of pl)if(py+16<=q.y+1&&p.y+16>=q.y&&p.x>q.x-8&&p.x<q.x+q.w+8){p.y=q.y-16;p.vy=0;on=true;break}
+    if(on&&K.j)p.vy=-700;
+    if(p.y-cam>G.H+30){p.y=cam+G.H-80;p.vy=0;pl.push({x:p.x-35,y:p.y+22,w:70})}
+    if(p.y-cam<G.H*.4)cam=p.y-G.H*.4;
+    gen();
+    G.g.fillStyle='#5aa469';
+    pl.forEach(q=>{const y=q.y-cam;if(y>-10&&y<G.H+10)G.g.fillRect(q.x,y,q.w,10)});
+    for(let i=it.length-1;i>=0;i--){const o=it[i],y=o.y-cam;
+      if(Math.hypot(o.x-p.x,o.y-p.y)<28){G.add(2*o.m);it.splice(i,1);continue}
+      if(y>-20&&y<G.H+20)G.g.fillText(ic[o.m],o.x,y)}
+    G.g.fillText('🐸',p.x,p.y-cam+12);
+  }},done)}
+
+// ===== 第3關:數字反應 =====
+function L3(done){
+  const cells=shuffle([...Array(16).keys()]).slice(0,8),arr=Array(16).fill(0);
+  cells.forEach((c,i)=>arr[c]=i+1);
+  $('#stage').innerHTML='<div id="hud"></div><div class="grid g4">'+arr.map(n=>n?`<button class="cell" data-n="${n}">${n}</button>`:'<div class="cell ghost"></div>').join('')+'</div>';
+  let next=1;const t0=performance.now(),el=()=>(performance.now()-t0)/1000;
+  const show=()=>{$('#hud').innerHTML=`<span>⏱ ${el().toFixed(1)}s</span><span>請點 ${Math.min(next,8)}</span>`};
+  show();every(show,50);
+  document.querySelectorAll('.cell[data-n]').forEach(b=>b.onclick=()=>{
+    if(+b.dataset.n===next){b.classList.add('ok');b.disabled=true;next++;
+      if(next>8){clr();const t=el();done(byTime(t,CFG.numBest,CFG.numStep,CFG.numLoss),`完成時間 ${t.toFixed(1)} 秒`)}}
+    else{b.classList.add('bad');setTimeout(()=>b.classList.remove('bad'),250)}});
+}
+
+// ===== 第4關:翻牌配對 =====
+function L4(done){
+  const em=['🐶','🐱','🦊','🐼','🐸','🐵','🐧','🦁'],d=shuffle([...em,...em]);
+  $('#stage').innerHTML='<div id="hud"></div><div class="grid g4">'+d.map((_,i)=>`<button class="cell back" data-i="${i}">❓</button>`).join('')+'</div>';
+  const bs=[...document.querySelectorAll('.cell')];let open=[],lock=false,found=0,miss=0;
+  const t0=performance.now(),el=()=>(performance.now()-t0)/1000;
+  const show=()=>{$('#hud').innerHTML=`<span>⏱ ${el().toFixed(1)}s</span><span>配對 ${found}/8</span>`};show();every(show,100);
+  bs.forEach((b,i)=>b.onclick=()=>{
+    if(lock||b.disabled||open.includes(i))return;
+    b.textContent=d[i];b.classList.remove('back');open.push(i);
+    if(open.length<2)return;
+    const[a,c]=open;open=[];
+    if(d[a]===d[c]){bs[a].disabled=bs[c].disabled=true;bs[a].classList.add('ok');bs[c].classList.add('ok');found++;show();
+      if(found===8){clr();const t=el();done(byTime(t,CFG.memBest,CFG.memStep,CFG.memLoss),`完成時間 ${t.toFixed(1)} 秒`)}}
+    else{lock=true;miss++;setTimeout(()=>{[a,c].forEach(k=>{bs[k].textContent='❓';bs[k].classList.add('back')});lock=false},600)}});
+}
+
+// ===== 第5關:猜數字 =====
+function L5(done){
+  const sec=shuffle([0,1,2,3,4,5,6,7,8,9]).slice(0,4).join('');
+  let cur='',n=0,wrong=0;
+  $('#stage').innerHTML='<div id="hud"></div><div class="panel"><div class="slots" id="sl"></div><p id="msg">輸入4個不重複的數字</p><div class="grid g5">'+[1,2,3,4,5,6,7,8,9,0].map(d=>`<button class="key" data-d="${d}">${d}</button>`).join('')+'</div><div class="ctl" style="grid-template-columns:1fr 2fr"><button id="dl">⌫</button><button id="gs">猜</button></div></div><div class="panel" style="margin-top:14px" id="hist"><b>猜測紀錄</b></div>';
+  const msg=t=>{$('#msg').textContent=t};
+  const draw=()=>{$('#sl').innerHTML=[0,1,2,3].map(i=>`<span>${cur[i]??''}</span>`).join('');
+    document.querySelectorAll('[data-d]').forEach(b=>b.disabled=cur.includes(b.dataset.d)||cur.length>=4);
+    $('#hud').innerHTML=`<span>剩餘 ${10-n} 次</span><span>⭐ ${Math.max(0,100-10*wrong)}</span>`};
+  const add=d=>{if(cur.length<4&&!cur.includes(d)){cur+=d;draw()}};
+  const del=()=>{cur=cur.slice(0,-1);draw()};
+  const kh=e=>{if(/^[0-9]$/.test(e.key))add(e.key);else if(e.key==='Backspace')del();else if(e.key==='Enter')go()};
+  const off=()=>document.removeEventListener('keydown',kh);
+  const go=()=>{
+    if(cur.length<4){msg('請輸入4個不重複的數字');return}
+    let a=0,b=0;for(let i=0;i<4;i++){if(cur[i]===sec[i])a++;else if(sec.includes(cur[i]))b++}
+    n++;if(a<4)wrong++;
+    $('#hist').insertAdjacentHTML('beforeend',`<div class="row"><span>第${n}次　${cur}</span><b>${a}A${b}B</b></div>`);
+    if(a===4){off();done(100-10*wrong,`第 ${n} 次猜中,答案 ${sec}`);return}
+    if(n>=10){off();done(0,`10 次用完,答案是 ${sec}`);return}
+    cur='';msg(`${a}A${b}B,再試試`);draw()};
+  document.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>add(b.dataset.d));
+  $('#dl').onclick=del;$('#gs').onclick=go;document.addEventListener('keydown',kh);draw();
+}
+
+// ===== 排行榜 =====
+// 填入 Supabase 專案網址與 anon key 後,全球玩家共用同一份排行榜;留空則只存在本機。
+const SB={url:'https://dxbnbqrxokiqsnwwacgy.supabase.co',key:'sb_publishable_Oj67qXT_M6Cd0wdsaV8hUA_0OocYRMh'};
+const online=()=>SB.url&&SB.key;
+const esc=t=>String(t).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
+const HD=()=>({apikey:SB.key,...(SB.key.startsWith('eyJ')?{Authorization:'Bearer '+SB.key}:{}),'Content-Type':'application/json'});
+async function postScore(name,total,detail){
+  if(!online()){let l=[];try{l=JSON.parse(localStorage.getItem('lb')||'[]');l.push({name,total});localStorage.setItem('lb',JSON.stringify(l))}catch(e){}return}
+  const r=await fetch(SB.url+'/rest/v1/scores',{method:'POST',headers:{...HD(),Prefer:'return=minimal'},body:JSON.stringify({name,total,detail})});
+  if(!r.ok)throw new Error(r.status);
+}
+async function getBoard(){
+  if(!online()){try{return JSON.parse(localStorage.getItem('lb')||'[]').sort((a,b)=>b.total-a.total).slice(0,20)}catch(e){return[]}}
+  const r=await fetch(SB.url+'/rest/v1/scores?select=name,total&order=total.desc,created_at.asc&limit=20',{headers:HD()});
+  if(!r.ok)throw new Error(r.status);return r.json();
+}
+async function board(back){
+  $('#stage').innerHTML='<div class="panel"><h2>排行榜</h2>'+(online()?'':'<p>(目前為本機排行榜)</p>')+'<div id="lb">載入中…</div><button class="btn" id="bk">返回</button></div>';
+  $('#bk').onclick=back;
+  try{const d=await getBoard();
+    $('#lb').innerHTML=d.length?d.map((r,i)=>`<div class="row"><span>${i+1}. ${esc(r.name)}</span><b>${r.total}</b></div>`).join(''):'<p>還沒有人上榜</p>'}
+  catch(e){$('#lb').textContent='排行榜載入失敗,請稍後再試。'}
+}
+
+// ===== 流程 =====
+const LV=[
+  {n:'接硬幣',d:'左右移動籃子接住掉落的硬幣。💰 = 2倍、💎 = 10倍。限時15秒。',run:L1},
+  {n:'平台跳躍',d:'操作青蛙踩上平台往上爬。電腦:←→ 移動、空白鍵跳;手機:按下方按鈕。⭐ 2分,💰 2倍、💎 10倍。限時60秒。',run:L2},
+  {n:'數字反應',d:'1 到 8 位置隨機,依序點完。越快分數越高。',run:L3},
+  {n:'翻牌配對',d:'翻開兩張相同的圖案就配對成功,全部配對完成即結束。越快分數越高。',run:L4},
+  {n:'猜數字',d:'電腦藏了4個不重複的數字(0~9)。每次猜測會回報幾A幾B:A = 數字與位置都對,B = 數字對但位置錯。共10次機會,每猜錯一次扣10分,猜出 4A 獲勝。',run:L5}
+];
+const bar=()=>{$('#bar').innerHTML=LV.map((_,i)=>`<i class="${i<=lv?'on':''}"></i>`).join('')};
+function menu(){
+  clr();scores=[];lv=0;bar();
+  let best='';try{best=localStorage.getItem('best5')||''}catch(e){}
+  $('#stage').innerHTML=`<div class="panel"><h1>37角落小遊戲</h1><p>五個小遊戲,每關滿分100分,總分500分。</p>${best?`<p>你的最高總分:<b>${best}</b></p>`:''}<button class="btn" id="go">開始挑戰</button><button class="btn sec" id="lbb">排行榜</button></div>`;
+  $('#go').onclick=()=>intro();$('#lbb').onclick=()=>board(menu);
+}
+function intro(){
+  clr();bar();const L=LV[lv];
+  $('#stage').innerHTML=`<div class="panel"><p>第 ${lv+1} 關</p><h2>${L.n}</h2><p>${L.d}</p><button class="btn" id="go">開始</button></div>`;
+  $('#go').onclick=()=>L.run(end);
+}
+function end(raw,note=''){
+  clr();const s=Math.min(CFG.cap,Math.round(raw));scores[lv]=s;
+  const last=lv===LV.length-1;
+  $('#stage').innerHTML=`<div class="panel"><p>${LV[lv].n}</p><div class="big">${s} 分</div><p>${note}</p><button class="btn" id="nx">${last?'看總成績':'下一關'}</button></div>`;
+  $('#nx').onclick=()=>{if(last)final();else{lv++;intro()}};
+}
+function final(){
+  const tot=scores.reduce((a,b)=>a+b,0);
+  try{const b=+localStorage.getItem('best5')||0;if(tot>b)localStorage.setItem('best5',tot)}catch(e){}
+  let nm='';try{nm=localStorage.getItem('name')||''}catch(e){}
+  $('#stage').innerHTML=`<div class="panel"><h2>總成績</h2><div class="big">${tot} / ${LV.length*CFG.cap}</div>${LV.map((l,i)=>`<div class="row"><span>${l.n}</span><b>${scores[i]}</b></div>`).join('')}<input id="nm" maxlength="12" placeholder="輸入暱稱(最多12字)" value="${esc(nm)}"><button class="btn" id="sub">送出成績</button><button class="btn sec" id="again">再玩一次</button></div>`;
+  $('#sub').onclick=async()=>{const n=$('#nm').value.trim().slice(0,12);if(!n){$('#nm').focus();return}
+    try{localStorage.setItem('name',n)}catch(e){}
+    const b=$('#sub');b.disabled=true;b.textContent='送出中…';
+    try{await postScore(n,tot,scores);board(menu)}catch(e){b.disabled=false;b.textContent='送出失敗,再試一次'}};
+  $('#again').onclick=menu;
+}
+menu();
+</script>
+</body>
+</html>
